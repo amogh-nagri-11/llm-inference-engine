@@ -1,0 +1,95 @@
+services:
+
+  # ── API Gateway ──────────────────────────────────────
+  gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      - WORKER_URLS=http://worker1:11434,http://worker2:11434
+      - REDIS_HOST=redis
+    depends_on:
+      - redis
+      - worker1
+      - worker2
+    volumes:
+      - ./gateway:/app
+    networks:
+      - inference-net
+
+  # ── Redis Queue ───────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - inference-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Ollama Worker 1 ───────────────────────────────────
+  worker1:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_worker1:/root/.ollama
+    networks:
+      - inference-net
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # ── Ollama Worker 2 ───────────────────────────────────
+  worker2:
+    image: ollama/ollama:latest
+    ports:
+      - "11435:11434"
+    volumes:
+      - ollama_worker2:/root/.ollama
+    networks:
+      - inference-net
+
+  # ── Prometheus ────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - inference-net
+
+  # ── Grafana ───────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - inference-net
+
+volumes:
+  ollama_worker1:
+  ollama_worker2:
+  grafana_data:
+
+networks:
+  inference-net:
+    driver: bridge
