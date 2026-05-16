@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 from typing import Optional, List
 from router.load_balancer import load_balancer
-from config.settings import settings
+from config import settings
 
 router = APIRouter()
 
@@ -26,7 +26,7 @@ class ChatRequest(BaseModel):
 # ── Auth helper ───────────────────────────────────────────
 
 def verify_api_key(x_api_key: Optional[str] = Header(None)):
-    if x_api_key != settings.api_key:
+    if x_api_key != settings.API_KEY:
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
@@ -45,7 +45,7 @@ async def health():
 async def generate(req: GenerateRequest, x_api_key: Optional[str] = Header(None)):
     verify_api_key(x_api_key)
 
-    model = req.model or settings.default_model
+    model = req.model or settings.DEFAULT_MODEL
     worker = load_balancer.pick_worker()
 
     try:

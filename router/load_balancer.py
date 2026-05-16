@@ -1,6 +1,6 @@
 from typing import List, Optional
 from workers.ollama_client import OllamaClient
-from config.settings import settings
+from config import settings
 import asyncio
 
 
@@ -17,7 +17,7 @@ class LoadBalancer:
         if not healthy:
             raise RuntimeError("No healthy workers available")
 
-        strategy = settings.routing_strategy
+        strategy = settings.ROUTING_STRATEGY
 
         if strategy == "round_robin":
             worker = healthy[self._rr_index % len(healthy)]
@@ -51,4 +51,4 @@ class LoadBalancer:
 
 
 # Singleton — imported across the app
-load_balancer = LoadBalancer(settings.get_worker_urls())
+load_balancer = LoadBalancer(settings.WORKER_URLS)

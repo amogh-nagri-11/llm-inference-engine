@@ -2,6 +2,37 @@ import httpx
 import time
 from dataclasses import dataclass, field
 from typing import AsyncGenerator
+from gateway.metrics import (
+    WORKER_ACTIVE_REQUESTS,
+    WORKER_REQUEST_COUNT,
+    WORKER_LATENCY,
+    WORKER_HEALTH
+)
+
+# WORKER_ACTIVE_REQUESTS = Gauge(
+#     "llm_worker_active_requests",
+#     "Active requests per worker",
+#     ["worker_url"]
+# )
+
+# WORKER_REQUEST_COUNT = Counter(
+#     "llm_worker_requests_total",
+#     "Total requests per worker",
+#     ["worker_url", "status"]  # status: success | failure
+# )
+
+# WORKER_LATENCY = Histogram(
+#     "llm_worker_latency_seconds",
+#     "Per-worker response latency",
+#     ["worker_url"],
+#     buckets=[0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0]
+# )
+
+# WORKER_HEALTH = Gauge(
+#     "llm_worker_healthy",
+#     "Worker health status (1=healthy, 0=unhealthy)",
+#     ["worker_url"]
+# )
 
 @dataclass
 class WorkerStats:
@@ -33,19 +64,21 @@ class OllamaClient:
                 return self.stats.is_healthy
         except Exception:
             self.stats.is_healthy = False
+            WORKER_ACTIVE_REQUESTS.labels(worker_url=self.base_url).dec()
             return False
 
     async def generate(self, model: str, prompt: str, stream: bool = False) -> dict:
         start = time.monotonic()
         self.stats.active_requests += 1
+        WORKER_ACTIVE_REQUESTS.labels(worker_url=self.base_url).inc()   
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(
-                    f"{self.base_url}/api/generate",
+                    f"{self.base_url}/api/chat",
                     json={
                         "model": model,
-                        "prompt": prompt,
+                        "messages": [{"role": "user", "content": prompt}],
                         "stream": False,
                     }
                 )
@@ -54,12 +87,15 @@ class OllamaClient:
 
                 # Update stats
                 latency = time.monotonic() - start
+                WORKER_LATENCY.labels(worker_url=self.base_url).observe(latency)
+                WORKER_REQUEST_COUNT.labels(worker_url=self.base_url, status="success").inc()
+
                 self.stats.total_requests += 1
                 self.stats.total_latency += latency
                 self.stats.failures = 0  # reset on success
 
                 return {
-                    "response": result.get("response", ""),
+                    "response": result.get("message", {}).get("content", ""),
                     "model": result.get("model"),
                     "worker_url": self.base_url,
                     "latency_ms": round(latency * 1000, 2),
@@ -68,13 +104,16 @@ class OllamaClient:
                 }
         except Exception as e:
             self.stats.failures += 1
+            WORKER_REQUEST_COUNT.labels(worker_url=self.base_url, status="failure").inc()
             raise RuntimeError(f"Worker {self.base_url} failed: {str(e)}")
         finally:
             self.stats.active_requests -= 1
+            WORKER_ACTIVE_REQUESTS.labels(worker_url=self.base_url).dec()
 
     async def chat(self, model: str, messages: list) -> dict:
         start = time.monotonic()
         self.stats.active_requests += 1
+        WORKER_ACTIVE_REQUESTS.labels(worker_url=self.base_url).inc()
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -90,6 +129,9 @@ class OllamaClient:
                 result = response.json()
 
                 latency = time.monotonic() - start
+                WORKER_LATENCY.labels(worker_url=self.base_url).observe(latency)
+                WORKER_REQUEST_COUNT.labels(worker_url=self.base_url, status="success").inc()
+
                 self.stats.total_requests += 1
                 self.stats.total_latency += latency
                 self.stats.failures = 0
@@ -104,6 +146,8 @@ class OllamaClient:
                 }
         except Exception as e:
             self.stats.failures += 1
+            WORKER_REQUEST_COUNT.labels(worker_url=self.base_url, status="failure").inc()
             raise RuntimeError(f"Worker {self.base_url} failed: {str(e)}")
         finally:
             self.stats.active_requests -= 1
+            WORKER_ACTIVE_REQUESTS.labels(worker_url=self.base_url).dec()
