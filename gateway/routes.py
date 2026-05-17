@@ -3,6 +3,8 @@ from pydantic import BaseModel
 from typing import Optional, List
 from router.load_balancer import load_balancer
 from config import settings
+import uuid 
+from workers.worker_pool import worker_pool 
 
 router = APIRouter()
 
@@ -50,8 +52,10 @@ async def generate(req: GenerateRequest, x_api_key: Optional[str] = Header(None)
 
     try:
         result = await worker.generate(model=model, prompt=req.prompt)
+        load_balancer.record_success(worker.stats.url)
         return result
     except RuntimeError as e:
+        load_balancer.record_failure(worker.stats.url)
         raise HTTPException(status_code=503, detail=str(e))
 
 
@@ -65,8 +69,10 @@ async def chat(req: ChatRequest, x_api_key: Optional[str] = Header(None)):
     try:
         messages = [m.model_dump() for m in req.messages]
         result = await worker.chat(model=model, messages=messages)
+        load_balancer.record_success(worker.stats.url)
         return result
     except RuntimeError as e:
+        load_balancer.record_failure(worker.stats.url)
         raise HTTPException(status_code=503, detail=str(e))
 
 
@@ -75,3 +81,27 @@ async def workers(x_api_key: Optional[str] = Header(None)):
     verify_api_key(x_api_key)
     await load_balancer.health_check_all()
     return load_balancer.get_worker_stats()
+
+@router.post("/queued/generate") 
+async def queued_generate(req: GenerateRequest, x_api_key: Optional[str] = Header(None)): 
+    verify_api_key(x_api_key) 
+    
+    request_id = str(uuid.uuid4()) 
+    model = req.model or settings.DEFAULT_MODEL 
+
+    await worker_pool.enqueue(request_id, {
+        "model": model, 
+        "prompt": req.prompt, 
+    })
+
+    result = await worker_pool.get_result(request_id) 
+    if not result: 
+        raise HTTPException(status_code=504, detail="Request timed out in queue") 
+    
+    return {"request_id": request_id, **result} 
+
+@router.get("/queue/depth") 
+async def queue_depth(x_api_key: Optional[str] = Header(None)): 
+    verify_api_key(x_api_key) 
+    depth = await worker_pool.queue_depth() 
+    return {"queue_depth": depth}

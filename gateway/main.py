@@ -6,16 +6,28 @@ from gateway.middleware import metrics_middleware
 from router.load_balancer import load_balancer
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from contextlib import asynccontextmanager
-
+from router.health_checker import health_checker 
+from workers.worker_pool import worker_pool
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("Starting LLM Inference Engine...")
+
+    # Workers
     await load_balancer.health_check_all()
     stats = load_balancer.get_worker_stats()
     healthy = sum(1 for w in stats if w["healthy"])
     print(f"Workers online: {healthy}/{len(stats)}")
+    
+    #Redis + queue
+    await worker_pool.connect()
+    worker_pool.start()
+
+    # background health check
+    health_checker.start()
     yield
+    health_checker.stop()
+
     print("Shutting down...")
 
 
