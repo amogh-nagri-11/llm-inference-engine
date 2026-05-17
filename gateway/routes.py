@@ -5,6 +5,7 @@ from router.load_balancer import load_balancer
 from config import settings
 import uuid 
 from workers.worker_pool import worker_pool 
+from router.autoscaler import autoscaler
 
 router = APIRouter()
 
@@ -37,8 +38,11 @@ def verify_api_key(x_api_key: Optional[str] = Header(None)):
 @router.get("/health")
 async def health():
     await load_balancer.health_check_all()
+    depth = await worker_pool.queue_depth()
     return {
         "status": "ok",
+        "queue_depth": depth, 
+        "worker_count": autoscaler._running_worker_count(),
         "workers": load_balancer.get_worker_stats()
     }
 

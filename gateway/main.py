@@ -8,6 +8,7 @@ from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from contextlib import asynccontextmanager
 from router.health_checker import health_checker 
 from workers.worker_pool import worker_pool
+from router.autoscaler import autoscaler
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -23,10 +24,17 @@ async def lifespan(app: FastAPI):
     await worker_pool.connect()
     worker_pool.start()
 
+    await autoscaler.connect() 
+    autoscaler.start()
+
     # background health check
     health_checker.start()
+
     yield
+
     health_checker.stop()
+    autoscaler.stop() 
+    worker_pool.stop()
 
     print("Shutting down...")
 
@@ -39,7 +47,6 @@ app = FastAPI(
 )
 
 app.add_middleware(BaseHTTPMiddleware, dispatch=metrics_middleware)
-
 app.include_router(router, prefix="/api/v1")
 
 
